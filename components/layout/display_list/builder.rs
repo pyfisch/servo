@@ -12,7 +12,7 @@ use app_units::{Au, AU_PER_PX};
 use canvas_traits::canvas::{CanvasMsg, FromLayoutMsg};
 use crate::block::BlockFlow;
 use crate::context::LayoutContext;
-use crate::display_list::background::{self, get_cyclic};
+use crate::display_list::background::{self, get_cyclic, BackgroundPlacement};
 use crate::display_list::border;
 use crate::display_list::gradient;
 use crate::display_list::items::{BaseDisplayItem, ClipScrollNode, BLUR_INFLATION_FACTOR};
@@ -576,6 +576,28 @@ impl<'a> DisplayListBuildState<'a> {
         self.current_clipping_and_scrolling = previous_clipping_and_scrolling;
         ret
     }
+
+    fn background_display_item<R, F: FnOnce(&mut Self) -> R>(
+        &mut self,
+        placement: BackgroundPlacement,
+        function: F,
+    ) -> R {
+        self.clipping_and_scrolling_scope(|state| {
+            if !placement.clip_radii.is_zero() || placement.fixed {
+                let clip_id =
+                    state.add_late_clip_node(placement.clip_rect.to_layout(), placement.clip_radii);
+                if placement.fixed {
+                    state.current_clipping_and_scrolling = ClippingAndScrolling {
+                        scrolling: ClipScrollNodeIndex::root_reference_frame(),
+                        clipping: Some(clip_id),
+                    }
+                } else {
+                    state.current_clipping_and_scrolling = ClippingAndScrolling::simple(clip_id);
+                }
+            }
+            function(state)
+        })
+    }
 }
 
 /// The logical width of an insertion point: at the moment, a one-pixel-wide line.
@@ -1057,13 +1079,7 @@ impl FragmentDisplayListBuilding for Fragment {
             index,
         );
 
-        state.clipping_and_scrolling_scope(|state| {
-            if !placement.clip_radii.is_zero() {
-                let clip_id =
-                    state.add_late_clip_node(placement.clip_rect.to_layout(), placement.clip_radii);
-                state.current_clipping_and_scrolling = ClippingAndScrolling::simple(clip_id);
-            }
-
+        state.background_display_item(placement, |state| {
             // Create the image display item.
             let base = state.create_base_display_item(
                 placement.bounds,
@@ -1085,7 +1101,7 @@ impl FragmentDisplayListBuilding for Fragment {
                     color: webrender_api::ColorF::WHITE,
                 },
             );
-        });
+        })
     }
 
     fn get_webrender_image_for_paint_worklet(
@@ -1168,13 +1184,7 @@ impl FragmentDisplayListBuilding for Fragment {
             index,
         );
 
-        state.clipping_and_scrolling_scope(|state| {
-            if !placement.clip_radii.is_zero() {
-                let clip_id =
-                    state.add_late_clip_node(placement.clip_rect.to_layout(), placement.clip_radii);
-                state.current_clipping_and_scrolling = ClippingAndScrolling::simple(clip_id);
-            }
-
+        state.background_display_item(placement, |state| {
             let base = state.create_base_display_item(
                 placement.bounds,
                 placement.clip_rect,
